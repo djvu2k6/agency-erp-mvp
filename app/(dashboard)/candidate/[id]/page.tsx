@@ -1,394 +1,265 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { createBrowserClient } from "@supabase/ssr";
 import { useParams, useRouter } from "next/navigation";
-import { 
-  ArrowLeft, FileText, Calendar, CheckCircle, Clock, Video, UserCheck, Briefcase, MapPin, Award, Loader2
-} from "lucide-react";
-import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
-import { toPng } from "html-to-image";
-import { jsPDF } from "jspdf";
-import { logAction } from "@/lib/audit"; // <-- Phase 7 Integration
+import { ArrowLeft, User, Briefcase, FileText, MapPin, Edit, Download, ShieldCheck, Camera, Loader2, Table } from "lucide-react";
+import CandidateEditor from "@/components/CandidateEditor";
+import * as XLSX from "xlsx"; // Make sure to import this!
 
 export default function CandidateProfilePage() {
-  const { id } = useParams();
+  const params = useParams();
   const router = useRouter();
+  const candidateId = params.id as string;
 
   const [candidate, setCandidate] = useState<any>(null);
   const [documents, setDocuments] = useState<any[]>([]);
-  const [interviews, setInterviews] = useState<any[]>([]);
-  const [placements, setPlacements] = useState<any[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
-  // F6: PDF State
-  const [generatingPDF, setGeneratingPDF] = useState(false);
-
-  // F4: Interview State
-  const [isInterviewModalOpen, setIsInterviewModalOpen] = useState(false);
-  const [interviewDate, setInterviewDate] = useState("");
-  const [interviewType, setInterviewType] = useState("Technical Assessment");
-  const [interviewNotes, setInterviewNotes] = useState("");
-  const [scheduling, setScheduling] = useState(false);
-
-  // F5: Placement State
-  const [isPlacementModalOpen, setIsPlacementModalOpen] = useState(false);
-  const [employerName, setEmployerName] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [destCountry, setDestCountry] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [durationMonths, setDurationMonths] = useState("24");
-  const [placing, setPlacing] = useState(false);
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   useEffect(() => {
-    if (id) {
-      fetchCandidateData();
-    }
-  }, [id]);
+    fetchEverything();
+  }, [candidateId]);
 
-  const fetchCandidateData = async () => {
+  const fetchEverything = async () => {
     setLoading(true);
-    try {
-      const [candRes, docRes, intRes, placeRes] = await Promise.all([
-        supabase.from("candidates").select("*").eq("id", id).single(),
-        supabase.from("documents").select("*").eq("candidate_id", id).order("created_at", { ascending: false }),
-        supabase.from("interviews").select("*").eq("candidate_id", id).order("interview_date", { ascending: true }),
-        supabase.from("placements").select("*").eq("candidate_id", id).order("created_at", { ascending: false })
-      ]);
+    const { data: candData } = await supabase.from("candidates").select("*").eq("id", candidateId).single();
+    setCandidate(candData);
 
-      if (candRes.data) setCandidate(candRes.data);
-      if (docRes.data) setDocuments(docRes.data);
-      if (intRes.data) setInterviews(intRes.data);
-      if (placeRes.data) setPlacements(placeRes.data);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setLoading(false);
-    }
+    const { data: docsData } = await supabase.storage.from("vault").list(`candidates/${candidateId}`);
+    if (docsData) setDocuments(docsData.filter(d => d.name !== ".emptyFolderPlaceholder"));
+
+    const { data: teamData } = await supabase.from("profiles").select("id, email, role");
+    if (teamData) setAgents(teamData);
+
+    setLoading(false);
   };
 
-  // Phase 6: Generate PDF Function
-  // Phase 6: Generate PDF Function (Upgraded to html-to-image)
-  const handleGeneratePDF = async () => {
-    const element = document.getElementById('bio-data-card');
-    if (!element) return;
-    
-    setGeneratingPDF(true);
-    try {
-      // html-to-image natively understands modern CSS and lab() colors
-      const dataUrl = await toPng(element, { 
-        cacheBust: true, 
-        pixelRatio: 2 // Keeps the PDF crystal clear
-      });
-      
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      // Calculate height dynamically based on the actual DOM element proportions
-      const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
-      
-      pdf.addImage(dataUrl, 'PNG', 0, 10, pdfWidth, pdfHeight);
-      pdf.save(`${candidate.name.replace(/\s+/g, '_')}_BioData.pdf`);
-      
-      // Log the PDF generation download
-      await logAction("PDF_DOWNLOAD", `Downloaded Bio-Data for ${candidate.name}`);
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      alert("Failed to generate PDF. Check console for details.");
-    } finally {
-      setGeneratingPDF(false);
-    }
-  };
-  // F4: Save Interview
-  const handleScheduleInterview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setScheduling(true);
-    try {
-      const { error } = await supabase.from("interviews").insert([
-        { candidate_id: id, interview_date: interviewDate, interview_type: interviewType, notes: interviewNotes, status: "Scheduled" }
-      ]);
-      if (error) throw error;
-      
-      // F7: Log it!
-      await logAction("INTERVIEW_SCHEDULED", `Scheduled ${interviewType} for ${candidate.name}`);
-
-      await fetchCandidateData();
-      setIsInterviewModalOpen(false);
-      setInterviewDate("");
-      setInterviewNotes("");
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setScheduling(false);
-    }
+  const handleAssignAgent = async (agentId: string) => {
+    await supabase.from("candidates").update({ assigned_agent_id: agentId }).eq("id", candidateId);
+    fetchEverything();
   };
 
-  // F5: Save Placement
-  const handleSavePlacement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPlacing(true);
-    try {
-      // 1. Insert into placements table
-      const { error: placementError } = await supabase.from("placements").insert([
-        {
-          candidate_id: id,
-          employer_name: employerName,
-          job_title: jobTitle,
-          destination_country: destCountry,
-          start_date: startDate,
-          contract_duration_months: parseInt(durationMonths)
-        }
-      ]);
-      if (placementError) throw placementError;
-
-      // 2. Update candidate status to "Placed"
-      const { error: updateError } = await supabase
-        .from("candidates")
-        .update({ status: "Placed" })
-        .eq("id", id);
-      if (updateError) throw updateError;
-
-      // F7: Log it!
-      await logAction("CANDIDATE_PLACED", `Placed ${candidate.name} at ${employerName} as ${jobTitle}`);
-
-      await fetchCandidateData();
-      setIsPlacementModalOpen(false);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to assign placement.");
-    } finally {
-      setPlacing(false);
-    }
+  const handleStatusChange = async (newStatus: string) => {
+    await supabase.from("candidates").update({ status: newStatus }).eq("id", candidateId);
+    fetchEverything();
   };
 
-  if (loading) return <div className="min-h-screen bg-[#f4f4f5] flex items-center justify-center font-bold text-slate-500 uppercase tracking-widest text-sm">Loading Candidate Vault...</div>;
-  if (!candidate) return <div className="min-h-screen bg-[#f4f4f5] flex items-center justify-center font-bold text-slate-500">Candidate not found.</div>;
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !candidate) return;
 
-  const isPlaced = placements.length > 0;
-  const activePlacement = isPlaced ? placements[0] : null;
+    setIsUploadingAvatar(true);
+    const fileExt = file.name.split('.').pop();
+    const filePath = `${candidateId}/avatar_${Date.now()}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage.from("avatars").upload(filePath, file);
+
+    if (!uploadError) {
+      const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
+      await supabase.from("candidates").update({ avatar_url: publicUrlData.publicUrl }).eq("id", candidateId);
+      fetchEverything();
+    }
+    setIsUploadingAvatar(false);
+  };
+
+  // --- NEW: Bulletproof Native PDF Generation ---
+  const handleGeneratePDF = () => {
+    // This triggers the browser's print dialog. 
+    // Tailwind's "print:" classes ensure only the resume section prints beautifully.
+    window.print();
+  };
+
+  // --- NEW: Individual Excel Export ---
+  const handleExportExcel = () => {
+    if (!candidate) return;
+    const exportData = [{
+      "Candidate ID": candidate.candidate_id,
+      "Full Name": candidate.name,
+      "Email Address": candidate.email,
+      "Phone Number": candidate.phone || "N/A",
+      "Current Role": candidate.current_role,
+      "Years Exp": candidate.experience_years,
+      "Country": candidate.country,
+      "Visa Track": candidate.visa_track_recommendation,
+      "Skills": Array.isArray(candidate.skills) ? candidate.skills.join(", ") : candidate.skills,
+      "Status": candidate.status,
+    }];
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Candidate Profile");
+    XLSX.writeFile(workbook, `${candidate.name.replace(/\s+/g, '_')}_Profile.xlsx`);
+  };
+
+  if (loading) return <div className="p-8 text-slate-500">Loading Command Center...</div>;
+  if (!candidate) return <div className="p-8 text-red-500">Candidate not found.</div>;
 
   return (
-    <div className="bg-[#f4f4f5] min-h-screen font-sans pb-12">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 px-8 py-5 flex items-center justify-between sticky top-0 z-20">
-        <div className="flex items-center gap-4">
-          <button onClick={() => router.push("/")} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer">
-            <ArrowLeft className="w-5 h-5 text-slate-700" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">{candidate.name}</h1>
-            <p className="text-sm text-slate-500 font-medium">{candidate.current_role} &bull; {candidate.country}</p>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          {/* F6: PDF Generation Button */}
-          <button 
-            onClick={handleGeneratePDF}
-            disabled={generatingPDF}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-slate-700 bg-white border border-slate-200 hover:border-slate-900 hover:text-slate-900 rounded-lg transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
-          >
-            {generatingPDF ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-            {generatingPDF ? "Generating..." : "Download Bio-Data"}
-          </button>
+    <div className="p-8 max-w-7xl mx-auto w-full print:p-0 print:m-0">
 
-          <span className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-bold shadow-sm ${candidate.status === 'Placed' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>
-            {candidate.status}
-          </span>
-        </div>
-      </div>
+      {/* Hide all navigation/buttons when printing */}
+      <div className="print:hidden">
+        <button onClick={() => router.push('/candidates')} className="flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors mb-6">
+          <ArrowLeft className="w-4 h-4" /> Back to Roster
+        </button>
 
-      <div className="p-8 max-w-[1600px] w-full mx-auto grid grid-cols-1 xl:grid-cols-3 gap-8">
-        
-        {/* Left Column: F1 Bio-Data & F5 Placement Card */}
-        {/* WE ADDED id="bio-data-card" HERE FOR THE PDF ENGINE TO CAPTURE */}
-        <div className="xl:col-span-1 space-y-8" id="bio-data-card">
-          
-          {/* F5: PLACEMENT STATUS CARD */}
-          <div className={`p-6 rounded-2xl border shadow-sm ${isPlaced ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className={`font-bold text-lg flex items-center gap-2 ${isPlaced ? 'text-emerald-900' : 'text-slate-900'}`}>
-                <Award className={`w-5 h-5 ${isPlaced ? 'text-emerald-600' : 'text-slate-400'}`} /> 
-                Placement Status
-              </h3>
-              {!isPlaced && (
-                <Dialog open={isPlacementModalOpen} onOpenChange={setIsPlacementModalOpen}>
-                  <DialogTrigger className="px-3 py-1.5 text-xs font-bold text-white bg-slate-900 rounded-lg hover:bg-black transition-colors cursor-pointer" data-html2canvas-ignore>
-                    Assign Role
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-md">
-                    <DialogTitle className="text-xl font-black text-slate-900 mb-4">Log New Placement</DialogTitle>
-                    <form onSubmit={handleSavePlacement} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Employer Name</label>
-                        <input type="text" required value={employerName} onChange={(e) => setEmployerName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Job Title</label>
-                        <input type="text" required value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Destination Country</label>
-                        <input type="text" required value={destCountry} onChange={(e) => setDestCountry(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-1">Start Date</label>
-                          <input type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900" />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-1">Duration (Months)</label>
-                          <input type="number" required value={durationMonths} onChange={(e) => setDurationMonths(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900" />
-                        </div>
-                      </div>
-                      <button type="submit" disabled={placing} className="w-full mt-4 bg-emerald-600 text-white font-bold py-3 rounded-xl hover:bg-emerald-700 transition-colors disabled:bg-slate-400">
-                        {placing ? "Logging Placement..." : "Confirm Placement"}
-                      </button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              )}
-            </div>
-
-            {isPlaced ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-0.5">Employer</p>
-                  <p className="font-black text-emerald-950 text-lg">{activePlacement.employer_name}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-0.5">Role & Location</p>
-                  <p className="font-medium text-emerald-900 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5"/> {activePlacement.job_title}</p>
-                  <p className="font-medium text-emerald-900 flex items-center gap-1.5 mt-0.5"><MapPin className="w-3.5 h-3.5"/> {activePlacement.destination_country}</p>
-                </div>
-                <div className="pt-3 border-t border-emerald-200 mt-2">
-                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-0.5">Start Date</p>
-                  <p className="font-medium text-emerald-900">{new Date(activePlacement.start_date).toLocaleDateString()} ({activePlacement.contract_duration_months} Months)</p>
-                </div>
-              </div>
-            ) : (
-              <div className="py-4 text-center text-sm font-medium text-slate-400">
-                Candidate is actively looking for placement.
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 className="font-bold text-slate-900 text-lg mb-6 flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-slate-900" /> Profile Overview
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Email</p>
-                <p className="font-medium text-slate-900">{candidate.email}</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Phone</p>
-                <p className="font-medium text-slate-900">{candidate.phone || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Experience</p>
-                <p className="font-medium text-slate-900">{candidate.experience_years} Years</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: F4 Interviews & F2 Vault */}
-        <div className="xl:col-span-2 space-y-8">
-          
-          {/* F4: Interview Tracker */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <div className="p-6 border-b border-slate-200 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg border border-blue-100">
-                  <Video className="w-5 h-5" />
-                </div>
-                <h3 className="font-bold text-slate-900 text-lg">Interview Tracker</h3>
-              </div>
-              
-              <Dialog open={isInterviewModalOpen} onOpenChange={setIsInterviewModalOpen}>
-                <DialogTrigger className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-slate-900 rounded-lg hover:bg-black transition-colors cursor-pointer shadow-sm">
-                  <Calendar className="w-4 h-4" /> Schedule
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                  <DialogTitle className="text-xl font-black text-slate-900 mb-4">Schedule Interview</DialogTitle>
-                  <form onSubmit={handleScheduleInterview} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1">Date & Time</label>
-                      <input type="datetime-local" required value={interviewDate} onChange={(e) => setInterviewDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900 transition-all text-sm font-medium" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1">Interview Type</label>
-                      <select value={interviewType} onChange={(e) => setInterviewType(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900 transition-all text-sm font-medium">
-                        <option>Technical Assessment</option>
-                        <option>HR Screening</option>
-                        <option>Client Round</option>
-                        <option>Visa Prep Mock</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1">Notes / Links</label>
-                      <textarea rows={3} value={interviewNotes} onChange={(e) => setInterviewNotes(e.target.value)} placeholder="Add Google Meet link or context..." className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900 transition-all text-sm font-medium resize-none" />
-                    </div>
-                    <button type="submit" disabled={scheduling} className="w-full mt-4 bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-colors disabled:bg-slate-400">
-                      {scheduling ? "Scheduling..." : "Confirm Schedule"}
-                    </button>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </div>
-            
-            <div className="p-0">
-              {interviews.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 font-medium text-sm">No interviews scheduled yet.</div>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {interviews.map(inv => (
-                    <li key={inv.id} className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 bg-slate-100 rounded-full border border-slate-200">
-                          <Clock className="w-5 h-5 text-slate-600" />
-                        </div>
-                        <div>
-                          <p className="font-bold text-slate-900">{inv.interview_type}</p>
-                          <p className="text-sm font-medium text-slate-500 mt-0.5">{new Date(inv.interview_date).toLocaleString()}</p>
-                          {inv.notes && <p className="text-xs text-slate-400 mt-1 italic">{inv.notes}</p>}
-                        </div>
-                      </div>
-                      <span className="inline-flex items-center px-3 py-1 rounded-md text-xs font-bold bg-slate-900 text-white">
-                        {inv.status}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {/* F2: Document Vault */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <h3 className="font-bold text-slate-900 text-lg mb-6 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-slate-900" /> Document Vault
-            </h3>
-            {documents.length === 0 ? (
-              <div className="text-center text-slate-400 font-medium text-sm py-4">No documents uploaded.</div>
-            ) : (
-              <div className="space-y-3">
-                {documents.map(doc => (
-                  <div key={doc.id} className="flex items-center justify-between p-3 border border-slate-200 rounded-xl bg-slate-50">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle className="w-5 h-5 text-green-500" />
-                      <span className="font-bold text-slate-700 text-sm">{doc.title}</span>
-                    </div>
-                    <a href={doc.file_url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">View File</a>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-5">
+            <div className="relative group cursor-pointer">
+              <label className="cursor-pointer block relative">
+                <input type="file" className="hidden" accept="image/*" onChange={handleAvatarUpload} disabled={isUploadingAvatar} />
+                {candidate.avatar_url ? (
+                  <img src={candidate.avatar_url} alt={candidate.name} className="w-16 h-16 rounded-full object-cover border-2 border-slate-200 dark:border-slate-800" />
+                ) : (
+                  <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center text-2xl font-bold border-2 border-transparent">
+                    {candidate.name.charAt(0)}
                   </div>
-                ))}
-              </div>
-            )}
+                )}
+                <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  {isUploadingAvatar ? <Loader2 className="w-4 h-4 text-white animate-spin" /> : <Camera className="w-5 h-5 text-white" />}
+                </div>
+              </label>
+            </div>
+
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-3">
+                {candidate.name}
+                <span className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded font-mono uppercase tracking-wider align-middle">
+                  {candidate.candidate_id || 'CID-PENDING'}
+                </span>
+              </h1>
+              <p className="text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-4">
+                <span className="flex items-center gap-1"><Briefcase className="w-4 h-4" /> {candidate.current_role}</span>
+                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {candidate.country}</span>
+              </p>
+            </div>
           </div>
 
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-3">
+            <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-700 dark:text-slate-200 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm">
+              <Edit className="w-4 h-4" /> Edit Profile
+            </button>
+            <button onClick={handleExportExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-all shadow-sm shadow-emerald-600/20">
+              <Table className="w-4 h-4" /> Excel
+            </button>
+            <button onClick={handleGeneratePDF} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-sm shadow-blue-600/20">
+              <Download className="w-4 h-4" /> Generate PDF
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Grid Layout (Becomes stacked list on Print) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 print:grid-cols-1 print:gap-4 print:w-full">
+
+        {/* Core Details - THIS IS WHAT PRINTS */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm h-fit print:border-none print:shadow-none print:p-0 print:block">
+
+          {/* Print-only Header (Replaces the top UI in the PDF) */}
+          <div className="hidden print:flex print:items-center print:gap-4 print:mb-8 print:border-b print:pb-6 print:border-slate-200">
+            {candidate.avatar_url && (
+              <img src={candidate.avatar_url} alt="Profile" className="w-24 h-24 rounded-full object-cover" />
+            )}
+            <div>
+              <h1 className="text-4xl font-black text-black">{candidate.name}</h1>
+              <p className="text-lg text-slate-600">{candidate.current_role} | {candidate.country}</p>
+              <p className="text-sm text-slate-400 mt-1">{candidate.email} | {candidate.phone}</p>
+            </div>
+          </div>
+
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2 print:text-black">
+            <User className="w-5 h-5 text-blue-600 print:text-black" /> Professional Summary
+          </h2>
+
+          <div className="space-y-4 print:space-y-6">
+            <div className="print:hidden">
+              <p className="text-sm text-slate-500 mb-1">Email</p>
+              <p className="font-medium text-slate-900 dark:text-white">{candidate.email}</p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-500 mb-1">Experience</p>
+              <p className="font-medium text-slate-900 dark:text-white print:text-black">{candidate.experience_years} Years</p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-500 mb-1">Target Visa Track</p>
+              <p className="font-medium text-slate-900 dark:text-white print:text-black">{candidate.visa_track_recommendation}</p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-500 mb-2">Verified Skills</p>
+              <div className="flex flex-wrap gap-2">
+                {Array.isArray(candidate.skills) ? candidate.skills.map((skill: string) => (
+                  <span key={skill} className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 print:text-black print:border-slate-300 text-xs font-bold rounded-md border border-slate-200 dark:border-slate-700">
+                    {skill}
+                  </span>
+                )) : <span className="text-sm text-slate-500">No skills listed</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Hide internal data from the PDF print out */}
+        <div className="print:hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm h-fit">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-600" /> Pipeline & Assignment
+          </h2>
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Assigned Agent</label>
+              <select value={candidate.assigned_agent_id || ""} onChange={(e) => handleAssignAgent(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-600/50 outline-none">
+                <option value="">-- Unassigned --</option>
+                {agents.map(agent => (
+                  <option key={agent.id} value={agent.id}>{agent.email}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Placement Status</label>
+              <select value={candidate.status || "Pending"} onChange={(e) => handleStatusChange(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-600/50 outline-none">
+                <option value="Pending">Pending Review</option>
+                <option value="Interviewing">Interviewing</option>
+                <option value="Visa Processing">Visa Processing</option>
+                <option value="Placed">Placed / Hired</option>
+                <option value="Rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="print:hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm h-fit">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-amber-600" /> Document Vault
+          </h2>
+          <div className="space-y-3">
+            {documents.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                No documents uploaded yet.
+              </p>
+            ) : (
+              documents.map(doc => (
+                <div key={doc.name} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl">
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate pr-4">
+                    {doc.name.split('_').slice(1).join('_') || doc.name}
+                  </span>
+                </div>
+              ))
+            )}
+            <button onClick={() => setIsEditing(true)} className="w-full mt-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
+              Open Vault Manager
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <CandidateEditor candidate={candidate} isOpen={isEditing} onClose={() => setIsEditing(false)} onRefresh={fetchEverything} />
     </div>
   );
 }
