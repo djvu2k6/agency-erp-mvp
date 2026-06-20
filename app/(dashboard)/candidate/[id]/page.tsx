@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createBrowserClient } from "@supabase/ssr";
-import { ArrowLeft, User, Briefcase, FileText, MapPin, Edit, Download, ShieldCheck, Camera, Loader2, Table, Mail, Phone, Calendar, Fingerprint, Globe, ShieldAlert, Users, StickyNote } from "lucide-react";
-import CandidateEditor from "@/components/CandidateEditor";
+import { ArrowLeft, User, Briefcase, FileText, MapPin, Edit, Download, ShieldCheck, Camera, Loader2, Table, Mail, Phone, Calendar, Fingerprint, Globe, ShieldAlert, Users, StickyNote, Trash2 } from "lucide-react"; import CandidateEditor from "@/components/CandidateEditor";
 import CandidateStatusLog from "@/components/CandidateStatusLog";
 import * as XLSX from "xlsx";
 import { logAction } from "@/lib/audit";
 import InterviewScheduler from "@/components/InterviewScheduler";
 import PlacementLogger from "@/components/PlacementLogger";
+
+
 
 const getPassportStatus = (expiryDateStr?: string) => {
   if (!expiryDateStr) return { label: "No Date Recorded", color: "text-slate-500 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700" };
@@ -36,7 +37,7 @@ export default function CandidateProfilePage() {
   const [interviews, setInterviews] = useState<any[]>([]);
   const [placement, setPlacement] = useState<any>(null);
   const [agents, setAgents] = useState<any[]>([]);
-  
+
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -62,26 +63,26 @@ export default function CandidateProfilePage() {
 
     // Fetch documents metadata from documents table
     const { data: docsData } = await supabase
-        .from("documents")
-        .select("*")
-        .eq("candidate_id", candidateId)
-        .order("created_at", { ascending: false });
+      .from("documents")
+      .select("*")
+      .eq("candidate_id", candidateId)
+      .order("created_at", { ascending: false });
     if (docsData) setDocuments(docsData);
 
     // Fetch interviews
     const { data: intData } = await supabase
-        .from("interviews")
-        .select("*")
-        .eq("candidate_id", candidateId)
-        .order("interview_date", { ascending: true });
+      .from("interviews")
+      .select("*")
+      .eq("candidate_id", candidateId)
+      .order("interview_date", { ascending: true });
     if (intData) setInterviews(intData);
 
     // Fetch placements
     const { data: placeData } = await supabase
-        .from("placements")
-        .select("*")
-        .eq("candidate_id", candidateId)
-        .maybeSingle();
+      .from("placements")
+      .select("*")
+      .eq("candidate_id", candidateId)
+      .maybeSingle();
     setPlacement(placeData);
 
     const { data: teamData } = await supabase.from("profiles").select("id, email, role");
@@ -119,6 +120,18 @@ export default function CandidateProfilePage() {
       fetchEverything();
     }
     setIsUploadingAvatar(false);
+  };
+
+  const handleDeleteCandidate = async () => {
+    if (!confirm(`Are you sure you want to permanently delete ${candidate.name}? This cannot be undone.`)) return;
+
+    await supabase.from("documents").delete().eq("candidate_id", candidateId);
+    await supabase.from("interviews").delete().eq("candidate_id", candidateId);
+    await supabase.from("placements").delete().eq("candidate_id", candidateId);
+    await supabase.from("candidates").delete().eq("id", candidateId);
+    await logAction("CANDIDATE_DELETE", `Deleted candidate ${candidate.name} (ID: ${candidateId})`);
+
+    router.push("/");
   };
 
   // --- NEW: Bulletproof Native PDF Generation ---
@@ -207,6 +220,9 @@ export default function CandidateProfilePage() {
             <button onClick={handleGeneratePDF} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-sm shadow-blue-600/20">
               <Download className="w-4 h-4" /> Generate PDF
             </button>
+            <button onClick={handleDeleteCandidate} className="flex items-center gap-2 px-4 py-2 bg-rose-600 text-white rounded-xl font-semibold hover:bg-rose-700 transition-all shadow-sm shadow-rose-600/20">
+              <Trash2 className="w-4 h-4" /> Delete
+            </button>
           </div>
         </div>
       </div>
@@ -216,7 +232,7 @@ export default function CandidateProfilePage() {
 
         {/* Column 1: Core Profile Details */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm h-fit print:border-none print:shadow-none print:p-0 print:block">
-          
+
           {/* Print-only Header (Replaces the top UI in the PDF) */}
           <div className="hidden print:flex print:items-center print:gap-4 print:mb-8 print:border-b print:pb-6 print:border-slate-200">
             {candidate.avatar_url && (
@@ -280,7 +296,7 @@ export default function CandidateProfilePage() {
           {/* Passport verification */}
           <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-md h-fit relative overflow-hidden group">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-            
+
             <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2 print:text-black">
               <Fingerprint className="w-5 h-5 text-blue-600 print:text-black" /> Passport Verification
             </h2>
@@ -433,18 +449,17 @@ export default function CandidateProfilePage() {
                       <span className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate pr-4 block">
                         {doc.title}
                       </span>
-                      <span className={`inline-block px-1.5 py-0.5 text-[8px] font-extrabold rounded border mt-1 ${
-                          doc.status === "Verified" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-450 border-emerald-100" :
-                          doc.status === "Expired" ? "bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-450 border-rose-100" :
+                      <span className={`inline-block px-1.5 py-0.5 text-[8px] font-extrabold rounded border mt-1 ${doc.status === "Verified" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-450 border-emerald-100" :
+                        doc.status === "Expired" ? "bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-450 border-rose-100" :
                           "bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-450 border-amber-100"
-                      }`}>
+                        }`}>
                         {doc.status || "Uploaded"}
                       </span>
                     </div>
-                    <a 
-                      href={doc.file_url} 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
+                    <a
+                      href={doc.file_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-700 text-[10px] font-bold"
                     >
                       View
@@ -467,7 +482,7 @@ export default function CandidateProfilePage() {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-blue-650" /> Interviews
               </h2>
-              <button 
+              <button
                 onClick={() => { setSelectedInterview(null); setIsInterviewOpen(true); }}
                 className="px-2 py-1 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-800/40 text-blue-600 dark:text-blue-400 rounded-lg text-[10px] font-bold border border-blue-100 dark:border-blue-900/50"
               >
@@ -484,11 +499,10 @@ export default function CandidateProfilePage() {
                   <div key={int.id} className="p-3 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-850 rounded-xl space-y-1.5 shadow-inner">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-850 dark:text-slate-100">{int.interview_type}</span>
-                      <span className={`px-2 py-0.5 text-[9px] font-extrabold rounded border ${
-                        int.status === "Passed" ? "bg-emerald-50 text-emerald-650 dark:bg-emerald-950/20 dark:text-emerald-400 border-emerald-100" :
+                      <span className={`px-2 py-0.5 text-[9px] font-extrabold rounded border ${int.status === "Passed" ? "bg-emerald-50 text-emerald-650 dark:bg-emerald-950/20 dark:text-emerald-400 border-emerald-100" :
                         int.status === "Failed" ? "bg-rose-50 text-rose-650 dark:bg-rose-950/20 dark:text-rose-450 border-rose-100" :
-                        "bg-blue-50 text-blue-600 dark:bg-blue-950/20 dark:text-blue-400 border-blue-100"
-                      }`}>
+                          "bg-blue-50 text-blue-600 dark:bg-blue-950/20 dark:text-blue-400 border-blue-100"
+                        }`}>
                         {int.status}
                       </span>
                     </div>
@@ -497,7 +511,7 @@ export default function CandidateProfilePage() {
                       <p className="text-[10px] text-slate-650 dark:text-slate-350 border-t border-slate-150 dark:border-slate-900 pt-1 italic font-medium">"{int.notes}"</p>
                     )}
                     <div className="flex justify-end pt-1">
-                      <button 
+                      <button
                         onClick={() => { setSelectedInterview(int); setIsInterviewOpen(true); }}
                         className="text-[9px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
                       >
@@ -515,25 +529,25 @@ export default function CandidateProfilePage() {
       </div>
 
       <CandidateEditor candidate={candidate} isOpen={isEditing} onClose={() => setIsEditing(false)} onRefresh={fetchEverything} />
-      
+
       {/* Scheduler Modal */}
-      <InterviewScheduler 
-        isOpen={isInterviewOpen} 
-        onClose={() => { setIsInterviewOpen(false); setSelectedInterview(null); }} 
-        candidateId={candidateId} 
-        candidateName={candidate.name} 
-        interview={selectedInterview} 
-        onRefresh={fetchEverything} 
+      <InterviewScheduler
+        isOpen={isInterviewOpen}
+        onClose={() => { setIsInterviewOpen(false); setSelectedInterview(null); }}
+        candidateId={candidateId}
+        candidateName={candidate.name}
+        interview={selectedInterview}
+        onRefresh={fetchEverything}
       />
 
       {/* Placement Modal */}
-      <PlacementLogger 
-        isOpen={isPlacementOpen} 
-        onClose={() => { setIsPlacementOpen(false); }} 
-        candidateId={candidateId} 
-        candidateName={candidate.name} 
-        placement={placement} 
-        onRefresh={fetchEverything} 
+      <PlacementLogger
+        isOpen={isPlacementOpen}
+        onClose={() => { setIsPlacementOpen(false); }}
+        candidateId={candidateId}
+        candidateName={candidate.name}
+        placement={placement}
+        onRefresh={fetchEverything}
       />
     </div>
   );

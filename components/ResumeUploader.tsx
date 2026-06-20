@@ -151,7 +151,7 @@ export default function ResumeUploader() {
           education: parsedData.education,
           visa_track_recommendation: parsedData.visaTrackRecommendation,
           gender: parsedData.gender || null,
-          additional_info: { 
+          additional_info: {
             notes: parsedData.additionalInfo,
             passport_expiry: parsedData.passportExpiry || null
           },
@@ -172,23 +172,21 @@ export default function ResumeUploader() {
     <div className="w-full max-w-3xl mx-auto p-6 sm:p-8 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto border border-slate-100 dark:border-slate-800 transition-colors duration-200">
 
       <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl mb-8 w-full max-w-[260px] mx-auto shadow-inner transition-colors duration-200">
-        <button 
-          onClick={() => setMode("ai")} 
-          className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all cursor-pointer ${
-            mode === "ai" 
-              ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm" 
+        <button
+          onClick={() => setMode("ai")}
+          className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all cursor-pointer ${mode === "ai"
+              ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-          }`}
+            }`}
         >
           AI Parsing
         </button>
-        <button 
-          onClick={() => setMode("manual")} 
-          className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all cursor-pointer ${
-            mode === "manual" 
-              ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm" 
+        <button
+          onClick={() => setMode("manual")}
+          className={`flex-1 text-xs font-bold py-2 rounded-lg transition-all cursor-pointer ${mode === "manual"
+              ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-          }`}
+            }`}
         >
           Manual Entry
         </button>

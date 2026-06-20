@@ -4,22 +4,32 @@ import { NextResponse } from 'next/server';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 const SYSTEM_PROMPT = `
-You are a strict ATS data extraction engine.
-Extract candidate details from the provided resume/document. Look very carefully for any passport number, passport expiry date, date of birth, and nationality/citizenship, as these are critical.
-Return ONLY a valid JSON object matching the exact schema below. Do not include markdown blocks, explanations, or any extra text. If a field is missing, return null.
+You are an expert document parser for an immigration agency.
+You will receive a bio-data document — it may be a typed PDF, a scanned image, a form, or a free-form document. Layouts vary widely. Some may have typos, inconsistent formatting, or missing fields.
+
+Your job: extract every possible field you can find. Be flexible — field labels may differ (e.g. "D.O.B", "Birth Date", "Date of Birth" are all the same). Infer intelligently.
+
+Return ONLY a raw JSON object — no markdown, no backticks, no explanation. If a field is not found, return null for that field.
 
 {
-  "fullName": "Full Name",
-  "email": "Email Address",
-  "phone": "Phone Number",
-  "skills": ["Skill 1", "Skill 2", "Skill 3"],
+  "fullName": "Full legal name of the candidate",
+  "email": "Email address or null",
+  "phone": "Phone number including country code if present, or null",
+  "skills": ["skill1", "skill2"],
   "experienceYears": 0,
-  "summary": "A concise 2-sentence professional summary.",
-  "dob": "Date of Birth (YYYY-MM-DD format if available, otherwise textual representation or null)",
-  "nationality": "Nationality / Country of Citizenship (e.g. Indian, British, etc. or null)",
-  "passportNumber": "Passport Number (alphanumeric, e.g. Z1234567, or null)",
-  "passportExpiry": "Passport Expiry Date (YYYY-MM-DD format or null)"
+  "summary": "1-2 sentence summary of the candidate's profile based on what you read",
+  "dob": "Date of birth in YYYY-MM-DD format. If only partial (e.g. year only), return what you have as a string",
+  "nationality": "Nationality or country of citizenship (e.g. Indian, Nepali). Look for 'Nationality', 'Citizenship', 'Country' labels",
+  "passportNumber": "Passport number — usually alphanumeric like A1234567 or Z9876543. Look carefully even in tables or handwritten sections",
+  "passportExpiry": "Passport expiry date in YYYY-MM-DD format or null",
+  "gender": "Male / Female / Other or null"
 }
+
+Critical rules:
+- Never hallucinate data. If genuinely not found, return null.
+- Dates must be YYYY-MM-DD. If month/day unclear, best-guess from context.
+- Passport numbers are usually 8-9 alphanumeric characters.
+- Skills can be inferred from job roles or certifications mentioned if no explicit skills list exists.
 `;
 
 export async function POST(req: Request) {
@@ -27,49 +37,78 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get('file') as File;
 
-    // Bulletproof safety check: Prevent crashes if frontend accidentally sends a string
     if (!file || typeof file === 'string') {
       return NextResponse.json(
-        { error: 'Invalid file upload. The backend received a string instead of a File object.' }, 
+        { error: 'No valid file received. Please upload a PDF or image.' },
         { status: 400 }
       );
     }
 
-    // Now we know it is 100% a valid File object
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString('base64');
 
-    // FIXED: The formatting here was broken by the comment
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.5-flash', // <--- Added "-latest" so the API finds the active server
+    // Determine mime type — default to pdf if browser sends blank
+    const mimeType = file.type && file.type !== 'application/octet-stream'
+      ? file.type
+      : 'application/pdf';
+
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
       generationConfig: {
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
+        temperature: 0.1, // Low temp = more precise, less creative
       }
     });
 
     const result = await model.generateContent([
-      SYSTEM_PROMPT,
+      { text: SYSTEM_PROMPT },
       {
         inlineData: {
           data: base64Data,
-          mimeType: file.type || 'application/pdf',
+          mimeType: mimeType,
         },
       },
     ]);
 
     let rawText = result.response.text();
 
-    // Strip out markdown formatting if Gemini includes it
-    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+    // Strip markdown fences if Gemini still wraps despite responseMimeType
+    rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
 
-    const parsedData = JSON.parse(rawText);
+    // Validate it's actual JSON before sending
+    let parsedData;
+    try {
+      parsedData = JSON.parse(rawText);
+    } catch (parseError) {
+      console.error('JSON parse failed. Raw Gemini output:', rawText);
+      return NextResponse.json(
+        { error: 'Gemini returned invalid JSON. Try again or use manual entry.', details: rawText.slice(0, 300) },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(parsedData, { status: 200 });
 
   } catch (error: any) {
-    console.error("🔥 Gemini Parsing Error Details:", error.message);
-    
+    console.error('Gemini Parsing Error:', error.message);
+
+    // Specific Gemini API errors
+    if (error.message?.includes('API_KEY')) {
+      return NextResponse.json(
+        { error: 'Invalid or missing Gemini API key. Check your .env file.' },
+        { status: 401 }
+      );
+    }
+
+    if (error.message?.includes('quota') || error.message?.includes('429')) {
+      return NextResponse.json(
+        { error: 'Gemini rate limit hit. Wait a minute and try again.' },
+        { status: 429 }
+      );
+    }
+
     return NextResponse.json(
-      { error: 'Failed to process resume', details: error.message },
+      { error: 'Failed to process document.', details: error.message },
       { status: 500 }
     );
   }
